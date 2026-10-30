@@ -1,0 +1,190 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SHAKER AWARDS 2026 | Accesos</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:22px;background:#111;color:white;font-family:Arial,sans-serif;text-align:center}
+h1{color:#d5b46b;font-size:25px}
+input,button{width:100%;max-width:420px;padding:14px;margin:8px auto;border-radius:9px;font-size:16px}
+input{display:block;border:1px solid #777}
+button{background:#d5b46b;border:0;font-weight:bold;cursor:pointer}
+#reader{max-width:450px;margin:20px auto;background:white;color:#111;padding:10px;border-radius:12px}
+#resultado{max-width:450px;margin:18px auto;padding:20px;border-radius:12px;font-size:19px;font-weight:bold;white-space:pre-line}
+.espera{background:#333}
+.autorizado{background:#176b3a}
+.duplicado{background:#a52a2a}
+.invalido{background:#805b16}
+.oculto{display:none}
+small{color:#bbb}
+</style>
+</head>
+<body>
+<h1>SHAKER AWARDS 2026</h1>
+<p>CONTROL DE ACCESO</p>
+
+<div id="configuracion">
+<input id="clave" type="password" placeholder="Clave privada de recepción">
+<input id="dispositivo" placeholder="Nombre de puerta (ej. PUERTA 1)">
+<button onclick="iniciar()">INICIAR ESCÁNER</button>
+</div>
+
+<div id="lectorArea" class="oculto">
+<div id="reader"></div>
+<button onclick="detener()">DETENER ESCÁNER</button>
+</div>
+
+<div id="resultado" class="espera">Esperando inicio...</div>
+<small>Control oficial de acceso · SHAKER AWARDS 2026</small>
+
+<iframe name="respuestaServidor" class="oculto"></iframe>
+
+<form id="envio" method="POST" target="respuestaServidor"
+action="https://script.google.com/macros/s/AKfycbxCerRoCn4xofSwr0yMXJIvVcc--GjOOv_11UC2u2sAZxZ6nbPzdVQLwsCof22kaTSnBA/exec">
+<input type="hidden" name="clave" id="postClave">
+<input type="hidden" name="id" id="postId">
+<input type="hidden" name="qr" id="postQr">
+<input type="hidden" name="dispositivo" id="postDispositivo">
+</form>
+
+<script>
+const SERVIDOR = "https://script.google.com/macros/s/AKfycbxCerRoCn4xofSwr0yMXJIvVcc--GjOOv_11UC2u2sAZxZ6nbPzdVQLwsCof22kaTSnBA/exec";
+
+let scanner = null;
+let ocupado = false;
+let claveSesion = "";
+let puerta = "";
+
+function mostrar(texto, clase="espera"){
+ const caja=document.getElementById("resultado");
+ caja.textContent=texto;
+ caja.className=clase;
+}
+
+async function iniciar(){
+ claveSesion=document.getElementById("clave").value.trim();
+ puerta=document.getElementById("dispositivo").value.trim();
+
+ if(!claveSesion || !puerta){
+  mostrar("Escribe la clave y el nombre de la puerta.","invalido");
+  return;
+ }
+
+ document.getElementById("configuracion").classList.add("oculto");
+ document.getElementById("lectorArea").classList.remove("oculto");
+ mostrar("Solicitando acceso a la cámara...");
+
+ try{
+  scanner=new Html5QrcodeScanner("reader",{
+   fps:10,
+   qrbox:{width:250,height:250},
+   rememberLastUsedCamera:true
+  },false);
+  scanner.render(alEscanear,()=>{});
+  mostrar("Coloca el QR dentro del recuadro.");
+ }catch(error){
+  mostrar("No se pudo iniciar la cámara: "+error,"invalido");
+ }
+}
+
+function alEscanear(texto){
+ if(ocupado)return;
+ ocupado=true;
+ enviarEscaneo(texto);
+}
+
+function enviarEscaneo(texto){
+ const id=crypto.randomUUID();
+
+ mostrar("VERIFICANDO BOLETO...");
+
+ document.getElementById("postClave").value=claveSesion;
+ document.getElementById("postId").value=id;
+ document.getElementById("postQr").value=texto;
+ document.getElementById("postDispositivo").value=puerta;
+
+ document.getElementById("envio").submit();
+ consultarResultado(id,0);
+}
+
+function consultarResultado(id,intento){
+ const callback="respuesta_"+id.replace(/-/g,"");
+ let terminado=false;
+
+ window[callback]=function(res){
+  if(terminado)return;
+  if(res.resultado==="PENDIENTE"){
+   if(intento>=20){
+    terminado=true;
+    limpiar(callback);
+    mostrar("No se recibió respuesta del servidor. Revisa la conexión.","invalido");
+    liberar();
+   }else{
+    setTimeout(()=>consultarResultado(id,intento+1),900);
+   }
+   return;
+  }
+
+  terminado=true;
+  limpiar(callback);
+  mostrarResultado(res);
+ };
+
+ const script=document.createElement("script");
+ script.src=SERVIDOR+
+  "?accion=estado&id="+encodeURIComponent(id)+
+  "&callback="+encodeURIComponent(callback)+
+  "&t="+Date.now();
+
+ script.onerror=function(){
+  if(!terminado){
+   terminado=true;
+   limpiar(callback);
+   mostrar("Error al consultar el servidor. Revisa internet.","invalido");
+   liberar();
+  }
+ };
+
+ document.body.appendChild(script);
+}
+
+function limpiar(callback){
+ delete window[callback];
+ document.querySelectorAll("script[src*='accion=estado']").forEach(s=>s.remove());
+}
+
+function mostrarResultado(res){
+ if(res.resultado==="AUTORIZADO"){
+  mostrar("✓ ACCESO AUTORIZADO\n\n"+res.nombre+"\n"+res.folio+"\n"+res.tipo,"autorizado");
+ }else if(res.resultado==="DUPLICADO"){
+  mostrar("✕ ESTE INVITADO YA INGRESÓ\n\n"+res.nombre+"\n"+res.folio,"duplicado");
+ }else{
+  mostrar("⚠ "+(res.mensaje||"No se pudo validar el boleto."),"invalido");
+ }
+ setTimeout(()=>{
+  mostrar("Listo para el siguiente boleto.");
+  liberar();
+ },3500);
+}
+
+function liberar(){
+ ocupado=false;
+}
+
+async function detener(){
+ if(scanner){
+  try{await scanner.clear();}catch(e){}
+  scanner=null;
+ }
+ claveSesion="";
+ document.getElementById("lectorArea").classList.add("oculto");
+ document.getElementById("configuracion").classList.remove("oculto");
+ mostrar("Escáner detenido.");
+}
+</script>
+</body>
+</html>
